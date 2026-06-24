@@ -121,6 +121,27 @@ class TestDerivedPaths:
         cfg = load_config(config_path=_write_project(tmp_path))
         assert cfg.continuous_traces_root == tmp_path / ".evoskill" / "harbor_jobs"
 
+    def test_jsonl_path_unset_by_default(self, tmp_path):
+        cfg = load_config(config_path=_write_project(tmp_path))
+        assert cfg.continuous_jsonl_path is None
+
+    def test_jsonl_path_relative_override(self, tmp_path):
+        cfg = load_config(config_path=_write_project(
+            tmp_path,
+            '\n[continuous]\njsonl_path = ".evoskill/continuous/complaints.jsonl"\n',
+        ))
+        assert cfg.continuous_jsonl_path == tmp_path / ".evoskill" / "continuous" / "complaints.jsonl"
+
+    def test_jsonl_path_absolute_override(self, tmp_path):
+        abs_path = tmp_path / "abs" / "complaints.jsonl"
+        cfg = load_config(config_path=_write_project(
+            tmp_path, f'\n[continuous]\njsonl_path = "{abs_path}"\n'))
+        assert cfg.continuous_jsonl_path == abs_path
+
+    def test_complaints_path_defaults_under_continuous_dir(self, tmp_path):
+        cfg = load_config(config_path=_write_project(tmp_path))
+        assert cfg.continuous_complaints_path == tmp_path / ".evoskill" / "continuous" / "complaints.jsonl"
+
     def test_traces_root_relative_override(self, tmp_path):
         cfg = load_config(config_path=_write_project(tmp_path, '\n[continuous]\ntraces_root = "mytraces"\n'))
         assert cfg.continuous_traces_root == tmp_path / "mytraces"

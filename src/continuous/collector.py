@@ -514,8 +514,13 @@ class JsonlReader(TraceReader):
             skills_active=[str(s) for s in (record.get("skills_active") or [])],
             agent_name=record.get("agent"),
             model_name=record.get("model"),
+            prompt_tokens=_coerce_int(record.get("prompt_tokens")),
+            completion_tokens=_coerce_int(record.get("completion_tokens")),
+            cost_usd=_coerce_float(record.get("cost_usd")),
             num_steps=len(steps),
+            timestamp=str(record["timestamp"]) if record.get("timestamp") else None,
             raw_path=str(self.path),
+            extra=record.get("extra") if isinstance(record.get("extra"), dict) else {},
         )
 
         reward = record.get("reward")

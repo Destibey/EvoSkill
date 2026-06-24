@@ -28,6 +28,11 @@ def _docker_path_overrides() -> dict[str, str]:
 EVOSKILL_DIR = '.evoskill'
 
 
+def _resolve_project_path(project_root: Path, value: str) -> Path:
+    path = Path(value).expanduser()
+    return path if path.is_absolute() else project_root / path
+
+
 @dataclass
 class HarnessConfig:
     name: HarnessName = 'claude'
@@ -212,9 +217,20 @@ class ProjectConfig:
     def continuous_traces_root(self) -> Path:
         """Default trace root for continuous harvest (Harbor job output)."""
         if self.continuous.traces_root:
-            path = Path(self.continuous.traces_root)
-            return path if path.is_absolute() else self.project_root / path
+            return _resolve_project_path(self.project_root, self.continuous.traces_root)
         return self.harbor_jobs_dir
+
+    @property
+    def continuous_jsonl_path(self) -> Path | None:
+        """Configured JSONL trace path, resolved relative to the project root."""
+        if not self.continuous.jsonl_path:
+            return None
+        return _resolve_project_path(self.project_root, self.continuous.jsonl_path)
+
+    @property
+    def continuous_complaints_path(self) -> Path:
+        """Default local trace file for operator complaint feedback."""
+        return self.evoskill_dir / 'continuous' / 'complaints.jsonl'
 
     @property
     def continuous_candidates_dir(self) -> Path:

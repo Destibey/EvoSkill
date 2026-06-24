@@ -56,7 +56,7 @@ def watch_cmd(once, max_ticks, interval_sec, mode, config_path):
     readers = build_readers(
         cont.trace_sources,
         traces_root=str(cfg.continuous_traces_root),
-        jsonl_path=cont.jsonl_path or None,
+        jsonl_path=str(cfg.continuous_jsonl_path) if cfg.continuous_jsonl_path else None,
         success_threshold=cont.success_threshold,
     )
     if not readers:

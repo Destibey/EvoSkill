@@ -56,7 +56,7 @@ def graduate_cmd(candidate_id, force, no_branch, config_path):
         readers = build_readers(
             cfg.continuous.trace_sources,
             traces_root=str(cfg.continuous_traces_root),
-            jsonl_path=cfg.continuous.jsonl_path or None,
+            jsonl_path=str(cfg.continuous_jsonl_path) if cfg.continuous_jsonl_path else None,
             success_threshold=cfg.continuous.success_threshold,
         )
         episodes = TraceCollector(readers).collect(advance=False, limit=cfg.continuous.harvest_window)

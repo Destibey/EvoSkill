@@ -23,6 +23,8 @@ _FOCUS_TO_OUTCOME = {"failure": "FAILURE", "success": "SUCCESS"}
 @click.command("harvest")
 @click.option("--traces", "traces_root", type=click.Path(path_type=Path), default=None,
               help="Trace root to harvest (default: configured harbor jobs dir).")
+@click.option("--jsonl", "jsonl_path", type=click.Path(dir_okay=False, path_type=Path),
+              default=None, help="JSONL trace file to harvest. Relative paths are project-relative.")
 @click.option("--source", "sources", multiple=True,
               type=click.Choice(["harbor", "goose", "jsonl"]),
               help="Trace source(s) to read. Repeatable. Default: config.")
@@ -37,7 +39,7 @@ _FOCUS_TO_OUTCOME = {"failure": "FAILURE", "success": "SUCCESS"}
               help="Cluster only — no LLM distillation, no candidates written.")
 @click.option("--config", "config_path", type=click.Path(dir_okay=False, path_type=Path),
               default=None, help="Load a specific config TOML file.")
-def harvest_cmd(traces_root, sources, window, min_cluster_size, max_candidates,
+def harvest_cmd(traces_root, jsonl_path, sources, window, min_cluster_size, max_candidates,
                 focus, dry_run, config_path):
     """Distill candidate skills from a window of usage traces."""
     from src.cli.config import load_config
@@ -56,6 +58,7 @@ def harvest_cmd(traces_root, sources, window, min_cluster_size, max_candidates,
     # Resolve effective parameters (CLI overrides config).
     src_list = list(sources) if sources else cont.trace_sources
     root = str(traces_root) if traces_root else str(cfg.continuous_traces_root)
+    jsonl = _resolve_jsonl_path(cfg, jsonl_path)
     window = window if window is not None else cont.harvest_window
     min_cluster_size = min_cluster_size if min_cluster_size is not None else cont.min_cluster_size
     max_candidates = max_candidates if max_candidates is not None else cont.max_candidates
@@ -64,13 +67,13 @@ def harvest_cmd(traces_root, sources, window, min_cluster_size, max_candidates,
     readers = build_readers(
         src_list,
         traces_root=root,
-        jsonl_path=cont.jsonl_path or None,
+        jsonl_path=str(jsonl) if jsonl else None,
         success_threshold=cont.success_threshold,
     )
     if not readers:
         console.print(
             f"[red]Error:[/red] no usable trace sources for {src_list} at [bold]{root}[/bold].\n"
-            "  Point --traces at a Harbor jobs dir, or set [continuous].jsonl_path."
+            "  Point --traces at a Harbor jobs dir, pass --jsonl, or set continuous.jsonl_path."
         )
         raise SystemExit(1)
 
@@ -78,9 +81,10 @@ def harvest_cmd(traces_root, sources, window, min_cluster_size, max_candidates,
         getattr(Outcome, _FOCUS_TO_OUTCOME[focus])
     ]
 
+    jsonl_line = f"\n  jsonl: {jsonl}" if jsonl else ""
     console.print(
         f"\n  [bold]EvoSkill harvest[/bold] — sources={src_list}  focus={focus}  "
-        f"window={window}  min_cluster={min_cluster_size}\n  traces: {root}\n"
+        f"window={window}  min_cluster={min_cluster_size}\n  traces: {root}{jsonl_line}\n"
     )
 
     # ── dry run: collect + cluster only ──
@@ -150,3 +154,10 @@ def _print_clusters(focus: str, clusters) -> None:
         example = c.episodes[0].task_text[:60].replace("\n", " ") if c.episodes else ""
         table.add_row(str(c.size), ", ".join(c.top_terms[:5]), example)
     console.print(table)
+
+
+def _resolve_jsonl_path(cfg, jsonl_path: Path | None) -> Path | None:
+    if jsonl_path is None:
+        return cfg.continuous_jsonl_path
+    path = jsonl_path.expanduser()
+    return path if path.is_absolute() else cfg.project_root / path
