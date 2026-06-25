@@ -33,6 +33,7 @@ def graduate_cmd(candidate_id, force, no_branch, config_path):
         CandidateStore,
         SurrogateEvaluator,
         TraceCollector,
+        baseline_candidate_from_library,
         build_readers,
         build_replay_buffer,
         graduate,
@@ -69,6 +70,7 @@ def graduate_cmd(candidate_id, force, no_branch, config_path):
         )
         episodes = TraceCollector(readers).collect(advance=False, limit=cfg.continuous.harvest_window)
         replay = build_replay_buffer(episodes, candidate, size=cfg.continuous.shadow_eval_size)
+        baseline = baseline_candidate_from_library(candidate, cfg.skills_dir)
 
         verifier = Agent(
             make_surrogate_verifier_options(
@@ -79,7 +81,7 @@ def graduate_cmd(candidate_id, force, no_branch, config_path):
         )
         verdict = asyncio.run(run_gate(
             candidate, replay, SurrogateEvaluator(verifier),
-            threshold=cfg.continuous.graduation_threshold,
+            threshold=cfg.continuous.graduation_threshold, baseline=baseline,
         ))
         candidate = record_gate_verdict(store, candidate, verdict)
         gate_score = verdict.score
@@ -90,6 +92,11 @@ def graduate_cmd(candidate_id, force, no_branch, config_path):
         )
         if verdict.detail:
             console.print(f"  [dim]{verdict.detail[:300]}[/dim]")
+        if verdict.baseline_score is not None:
+            console.print(
+                f"  Baseline {verdict.baseline_name}: score={verdict.baseline_score:.2f} "
+                f"improvement={verdict.improvement:+.2f}"
+            )
         if not verdict.passed:
             console.print("\n  Not graduated. Re-run with --force to override.\n")
             raise SystemExit(1)

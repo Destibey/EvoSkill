@@ -32,7 +32,14 @@ from .candidates import Candidate, CandidateStore
 from .cluster import cluster_episodes
 from .collector import TraceCollector, TraceCursor, TraceReader
 from .episode import Outcome
-from .gate import GateVerdict, SurrogateEvaluator, build_replay_buffer, record_gate_verdict, run_gate
+from .gate import (
+    GateVerdict,
+    SurrogateEvaluator,
+    baseline_candidate_from_library,
+    build_replay_buffer,
+    record_gate_verdict,
+    run_gate,
+)
 from .graduation import graduate
 from .harvest import distill_clusters
 from .library import SkillLibrary
@@ -224,7 +231,11 @@ async def run_tick(
                 continue
 
         replay = build_replay_buffer(episodes, candidate, size=cfg.shadow_eval_size)
-        verdict = await run_gate(candidate, replay, evaluator, threshold=cfg.graduation_threshold)
+        baseline = baseline_candidate_from_library(candidate, skills_dir) if skills_dir is not None else None
+        verdict = await run_gate(
+            candidate, replay, evaluator,
+            threshold=cfg.graduation_threshold, baseline=baseline,
+        )
         report.gated[candidate.candidate_id] = verdict
 
         # Record the verdict on the buffered candidate for audit.

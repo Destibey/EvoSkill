@@ -17,6 +17,7 @@ policy.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Protocol
 
 from .candidates import Candidate, CandidateStore
@@ -53,6 +54,11 @@ class GateVerdict:
     n_tasks: int
     assertions: list[str] = field(default_factory=list)
     detail: str = ""
+    baseline_name: str | None = None
+    baseline_score: float | None = None
+    baseline_verdict: bool | None = None
+    improvement: float | None = None
+    min_improvement: float | None = None
 
 
 def build_replay_buffer(
@@ -145,11 +151,14 @@ async def run_gate(
     evaluator: GateEvaluator,
     *,
     threshold: float = 0.6,
+    baseline: Candidate | None = None,
+    min_improvement: float = 0.0,
 ) -> GateVerdict:
     """Run the gate: evaluate the candidate on the held-out buffer, apply the policy.
 
     A candidate passes only if the evaluator returns `verdict=True` AND its score
-    meets `threshold`. Both conditions guard against weak passes.
+    meets `threshold`. If a baseline is supplied, the candidate must also score
+    at least `min_improvement` above that baseline on the same replay tasks.
     """
     tasks = [GateTask(task_text=e.task_text, task_id=e.task_id) for e in replay_episodes]
     if not tasks:
@@ -161,8 +170,16 @@ async def run_gate(
             n_tasks=0,
             detail="no held-out replay tasks; cannot prove generalization",
         )
+    baseline_outcome: EvalOutcome | None = None
+    improvement: float | None = None
+    if baseline is not None:
+        baseline_outcome = await evaluator.evaluate(baseline, tasks)
     outcome = await evaluator.evaluate(candidate, tasks)
+    if baseline_outcome is not None:
+        improvement = round(outcome.score - baseline_outcome.score, 6)
     passed = bool(outcome.verdict) and outcome.score >= threshold
+    if improvement is not None:
+        passed = passed and improvement >= min_improvement
     return GateVerdict(
         passed=passed,
         method=evaluator.method,
@@ -171,6 +188,35 @@ async def run_gate(
         n_tasks=len(tasks),
         assertions=outcome.assertions,
         detail=outcome.detail,
+        baseline_name=baseline.skill_name if baseline is not None else None,
+        baseline_score=baseline_outcome.score if baseline_outcome is not None else None,
+        baseline_verdict=baseline_outcome.verdict if baseline_outcome is not None else None,
+        improvement=improvement,
+        min_improvement=min_improvement if improvement is not None else None,
+    )
+
+
+def baseline_candidate_from_library(
+    candidate: Candidate,
+    skills_dir: str | Path,
+    *,
+    skill_name: str | None = None,
+) -> Candidate | None:
+    """Return a Candidate-shaped view of the current live skill baseline, if any."""
+    from .library import SkillLibrary
+
+    skill = SkillLibrary(skills_dir).get(skill_name or candidate.skill_name)
+    if skill is None:
+        return None
+    return Candidate(
+        candidate_id=f"baseline-{skill.dir_name}",
+        skill_name=skill.name,
+        skill_markdown=skill.path.read_text(),
+        target_pattern=candidate.target_pattern,
+        source="baseline",
+        cluster_size=0,
+        episode_ids=[],
+        extra={"baseline_path": str(skill.path), "baseline_dir": skill.dir_name},
     )
 
 
@@ -194,6 +240,16 @@ def record_gate_verdict(
             "gate_detail": verdict.detail,
         }
     )
+    if verdict.baseline_score is not None:
+        extra.update(
+            {
+                "gate_baseline_name": verdict.baseline_name,
+                "gate_baseline_score": verdict.baseline_score,
+                "gate_baseline_verdict": verdict.baseline_verdict,
+                "gate_improvement": verdict.improvement,
+                "gate_min_improvement": verdict.min_improvement,
+            }
+        )
     if evaluated_at is not None:
         extra["gate_evaluated_at"] = evaluated_at
     updated = candidate.model_copy(update={"extra": extra})

@@ -53,11 +53,11 @@ def candidates_cmd(show_id, status_filter, config_path):
         return
 
     table = Table(box=None, pad_edge=False, show_header=True, header_style="bold")
-    table.add_column("Candidate id", min_width=24)
-    table.add_column("Skill", min_width=20)
-    table.add_column("Size", width=5)
-    table.add_column("Status", width=10)
-    table.add_column("Gate", width=12)
+    table.add_column("Candidate id", min_width=20)
+    table.add_column("Skill", min_width=16)
+    table.add_column("Size", width=4)
+    table.add_column("Status", width=9)
+    table.add_column("Gate", min_width=16, no_wrap=True)
     table.add_column("Pattern")
     for c in candidates:
         table.add_row(
@@ -74,7 +74,14 @@ def _gate_label(candidate) -> str:
         return "-"
     status = "pass" if candidate.extra.get("gate_passed") else "fail"
     score = candidate.extra.get("gate_score")
+    improvement = candidate.extra.get("gate_improvement")
     try:
-        return f"{status} {float(score):.2f}"
+        label = f"{status} {float(score):.2f}"
     except (TypeError, ValueError):
-        return status
+        label = status
+    if improvement is not None:
+        try:
+            label += f" {float(improvement):+.2f}"
+        except (TypeError, ValueError):
+            pass
+    return label

@@ -115,16 +115,21 @@ class TestCandidatesCli:
         store = CandidateStore(load_config(config_path=cfg).continuous_candidates_dir)
         store.save(Candidate(
             candidate_id="a", skill_name="a", skill_markdown="x", episode_ids=["e"],
-            extra={"gate_passed": False, "gate_score": 0.25, "gate_detail": "not enough replay"},
+            extra={
+                "gate_passed": False,
+                "gate_score": 0.25,
+                "gate_improvement": 0.5,
+                "gate_detail": "not enough replay",
+            },
         ))
 
         listing = CliRunner().invoke(candidates_cmd, ["--config", str(cfg)])
         assert listing.exit_code == 0
-        assert "fail 0.25" in listing.output
+        assert "fail 0.25 +0.50" in listing.output
 
         shown = CliRunner().invoke(candidates_cmd, ["--config", str(cfg), "--show", "a"])
         assert shown.exit_code == 0
-        assert "gate: fail 0.25" in shown.output
+        assert "gate: fail 0.25 +0.50" in shown.output
         assert "not enough replay" in shown.output
 
 
@@ -139,6 +144,24 @@ class _FakeGateAgent:
                 verdict=True,
                 assertions=["held-out task is covered"],
                 reasoning="candidate generalizes",
+            ),
+            model="fake",
+            total_cost_usd=0.0,
+        )
+
+
+class _CompareGateAgent:
+    def __init__(self, _options, _schema):
+        pass
+
+    async def run(self, query):
+        score = 0.2 if "old rule" in query else 0.84
+        return SimpleNamespace(
+            output=SimpleNamespace(
+                score=score,
+                verdict=True,
+                assertions=["candidate beats baseline"],
+                reasoning="candidate improves the held-out replay",
             ),
             model="fake",
             total_cost_usd=0.0,
@@ -187,6 +210,33 @@ class TestGateCli:
         assert saved.extra["gate_score"] == 0.84
         assert saved.extra["gate_n_tasks"] == 1
         assert not (loaded.skills_dir / "preserve-units" / "SKILL.md").exists()
+
+    def test_gate_compares_against_live_baseline(self, tmp_path, monkeypatch):
+        cfg = _project(tmp_path, '\n[continuous]\ntrace_sources = ["jsonl"]\n')
+        trace = self._jsonl(tmp_path)
+        from src.cli.config import load_config
+        import src.harness as harness
+
+        loaded = load_config(config_path=cfg)
+        _write_skill(loaded.skills_dir, "preserve-units", "old")
+        (loaded.skills_dir / "preserve-units" / "SKILL.md").write_text(
+            "---\nname: preserve-units\ndescription: old\n---\nold rule"
+        )
+        store = CandidateStore(loaded.continuous_candidates_dir)
+        store.save(self._candidate())
+        monkeypatch.setattr(harness, "set_sdk", lambda _name: None)
+        monkeypatch.setattr(harness, "Agent", _CompareGateAgent)
+
+        result = CliRunner().invoke(
+            gate_cmd, ["--config", str(cfg), "--jsonl", str(trace), "--source", "jsonl", "units-abc"])
+
+        assert result.exit_code == 0, result.output
+        assert "Baseline preserve-units" in result.output
+        assert "improvement=+0.64" in result.output
+        saved = store.get("units-abc")
+        assert saved.extra["gate_baseline_name"] == "preserve-units"
+        assert saved.extra["gate_baseline_score"] == 0.2
+        assert saved.extra["gate_improvement"] == 0.64
 
     def test_gate_fails_closed_without_held_out_replay(self, tmp_path, monkeypatch):
         cfg = _project(tmp_path, '\n[continuous]\ntrace_sources = ["jsonl"]\n')

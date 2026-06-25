@@ -23,9 +23,11 @@ console = Console()
               help="Trace source(s) to read. Repeatable. Default: config.")
 @click.option("--window", type=int, default=None, help="Max episodes to collect.")
 @click.option("--threshold", type=float, default=None, help="Gate pass threshold.")
+@click.option("--baseline-skill", default=None,
+              help="Live skill name/dir to compare against. Default: candidate skill name.")
 @click.option("--config", "config_path", type=click.Path(dir_okay=False, path_type=Path),
               default=None, help="Load a specific config TOML file.")
-def gate_cmd(candidate_id, traces_root, jsonl_path, sources, window, threshold, config_path):
+def gate_cmd(candidate_id, traces_root, jsonl_path, sources, window, threshold, baseline_skill, config_path):
     """Run the quality gate and store the verdict, without live skill writeback."""
     from src.agent_profiles import make_surrogate_verifier_options
     from src.cli.config import load_config
@@ -33,6 +35,7 @@ def gate_cmd(candidate_id, traces_root, jsonl_path, sources, window, threshold, 
         CandidateStore,
         SurrogateEvaluator,
         TraceCollector,
+        baseline_candidate_from_library,
         build_readers,
         build_replay_buffer,
         record_gate_verdict,
@@ -70,6 +73,11 @@ def gate_cmd(candidate_id, traces_root, jsonl_path, sources, window, threshold, 
 
     episodes = TraceCollector(readers).collect(advance=False, limit=window)
     replay = build_replay_buffer(episodes, candidate, size=cont.shadow_eval_size)
+    baseline = baseline_candidate_from_library(
+        candidate,
+        cfg.skills_dir,
+        skill_name=baseline_skill or candidate.skill_name,
+    )
 
     set_sdk(cfg.harness.name)
     verifier = Agent(
@@ -84,6 +92,7 @@ def gate_cmd(candidate_id, traces_root, jsonl_path, sources, window, threshold, 
         replay,
         SurrogateEvaluator(verifier, max_tasks=cont.shadow_eval_size),
         threshold=threshold,
+        baseline=baseline,
     ))
     record_gate_verdict(
         store,
@@ -99,6 +108,11 @@ def gate_cmd(candidate_id, traces_root, jsonl_path, sources, window, threshold, 
     )
     if verdict.detail:
         console.print(f"  [dim]{verdict.detail[:300]}[/dim]")
+    if verdict.baseline_score is not None:
+        console.print(
+            f"  Baseline {verdict.baseline_name}: score={verdict.baseline_score:.2f} "
+            f"improvement={verdict.improvement:+.2f}"
+        )
     console.print("  Candidate remains buffered; no live skill was written.\n")
     if not verdict.passed:
         raise SystemExit(1)

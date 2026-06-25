@@ -9,6 +9,7 @@ from src.continuous.candidates import Candidate
 from src.continuous.gate import (
     GateTask,
     SurrogateEvaluator,
+    baseline_candidate_from_library,
     build_replay_buffer,
     build_surrogate_query,
     record_gate_verdict,
@@ -46,6 +47,17 @@ class _FakeVerifier:
         return SimpleNamespace(
             output=SimpleNamespace(score=self.score, verdict=self.verdict,
                                    assertions=["generalizes"], reasoning="ok"),
+            model="m",
+        )
+
+
+class _QueryScoreVerifier:
+    async def run(self, query):
+        score = 0.3 if "old rule" in query else 0.9
+        return SimpleNamespace(
+            output=SimpleNamespace(
+                score=score, verdict=True, assertions=["compared"], reasoning="ok"
+            ),
             model="m",
         )
 
@@ -134,6 +146,54 @@ class TestRunGate:
         assert "no held-out replay tasks" in v.detail
         assert verifier.last_query is None
 
+    def test_baseline_comparison_records_improvement(self):
+        candidate = _candidate()
+        baseline = _candidate(())
+        baseline.skill_markdown = "---\nname: preserve-units\ndescription: d\n---\nold rule"
+        ev = SurrogateEvaluator(_QueryScoreVerifier())
+
+        v = asyncio.run(run_gate(
+            candidate, [make_episode("e3", "t")], ev, threshold=0.6, baseline=baseline,
+        ))
+
+        assert v.passed is True
+        assert v.score == 0.9
+        assert v.baseline_score == 0.3
+        assert v.improvement == 0.6
+        assert v.baseline_name == "preserve-units"
+
+    def test_baseline_min_improvement_can_fail(self):
+        candidate = _candidate()
+        baseline = _candidate(())
+        baseline.skill_markdown = "---\nname: preserve-units\ndescription: d\n---\nold rule"
+        ev = SurrogateEvaluator(_QueryScoreVerifier())
+
+        v = asyncio.run(run_gate(
+            candidate, [make_episode("e3", "t")], ev,
+            threshold=0.6, baseline=baseline, min_improvement=0.7,
+        ))
+
+        assert v.passed is False
+        assert v.improvement == 0.6
+
+
+class TestBaselineCandidateFromLibrary:
+    def test_reads_live_skill_as_candidate(self, tmp_path):
+        skill_dir = tmp_path / "skills" / "preserve-units"
+        skill_dir.mkdir(parents=True)
+        skill_file = skill_dir / "SKILL.md"
+        skill_file.write_text("---\nname: preserve-units\ndescription: old\n---\nold rule")
+
+        baseline = baseline_candidate_from_library(_candidate(), tmp_path / "skills")
+
+        assert baseline is not None
+        assert baseline.skill_name == "preserve-units"
+        assert baseline.skill_markdown == skill_file.read_text()
+        assert baseline.extra["baseline_path"] == str(skill_file)
+
+    def test_missing_live_skill_returns_none(self, tmp_path):
+        assert baseline_candidate_from_library(_candidate(), tmp_path / "skills") is None
+
 
 class TestRecordGateVerdict:
     def test_persists_audit_fields_without_status_change(self, tmp_path):
@@ -154,3 +214,23 @@ class TestRecordGateVerdict:
         assert saved.extra["gate_score"] == 0.9
         assert saved.extra["gate_n_tasks"] == 1
         assert saved.extra["gate_evaluated_at"] == "2026-06-25T00:00:00Z"
+
+    def test_persists_baseline_fields(self, tmp_path):
+        from src.continuous.candidates import CandidateStore
+
+        store = CandidateStore(tmp_path / "cands")
+        candidate = _candidate()
+        baseline = _candidate(())
+        baseline.skill_markdown = "---\nname: preserve-units\ndescription: d\n---\nold rule"
+        store.save(candidate)
+        ev = SurrogateEvaluator(_QueryScoreVerifier())
+        verdict = asyncio.run(run_gate(
+            candidate, [make_episode("e3", "t")], ev, threshold=0.6, baseline=baseline,
+        ))
+
+        record_gate_verdict(store, candidate, verdict)
+
+        saved = store.get(candidate.candidate_id)
+        assert saved.extra["gate_baseline_name"] == "preserve-units"
+        assert saved.extra["gate_baseline_score"] == 0.3
+        assert saved.extra["gate_improvement"] == 0.6
