@@ -18,6 +18,7 @@ from src.cli.commands.gate import gate_cmd
 from src.cli.commands.graduate import graduate_cmd, reject_cmd
 from src.cli.commands.harvest import harvest_cmd
 from src.cli.commands.library import library_cmd
+from src.cli.commands.skill_eval import skill_eval_cmd
 from src.cli.commands.watch import watch_cmd
 from src.continuous.candidates import Candidate, CandidateStore
 
@@ -261,6 +262,77 @@ class TestGateCli:
         assert saved.status == "pending"
         assert saved.extra["gate_passed"] is False
         assert saved.extra["gate_n_tasks"] == 0
+
+
+class TestSkillEvalCli:
+    def _candidate(self):
+        return Candidate(
+            candidate_id="units-abc", skill_name="preserve-units",
+            skill_markdown="---\nname: preserve-units\ndescription: d\n---\nrule",
+            target_pattern="answers miss units",
+            episode_ids=["source"], cluster_size=1,
+        )
+
+    def _jsonl(self, tmp_path, *, heldout=True):
+        trace = tmp_path / ".evoskill" / "continuous" / "complaints.jsonl"
+        trace.parent.mkdir(parents=True, exist_ok=True)
+        records = [{"episode_id": "source", "task": "source complaint", "outcome": "failure"}]
+        if heldout:
+            records.append({"episode_id": "heldout", "task": "held-out similar complaint",
+                            "outcome": "failure"})
+        trace.write_text("\n".join(json.dumps(r) for r in records) + "\n")
+        return trace
+
+    def test_exports_agent_skills_eval_packet(self, tmp_path):
+        cfg = _project(tmp_path, '\n[continuous]\ntrace_sources = ["jsonl"]\n')
+        trace = self._jsonl(tmp_path)
+        from src.cli.config import load_config
+
+        loaded = load_config(config_path=cfg)
+        store = CandidateStore(loaded.continuous_candidates_dir)
+        store.save(self._candidate())
+        result = CliRunner().invoke(
+            skill_eval_cmd,
+            ["--config", str(cfg), "--jsonl", str(trace), "--source", "jsonl", "units-abc"],
+        )
+
+        assert result.exit_code == 0, result.output
+        out = loaded.project_root / ".evoskill" / "continuous" / "external-evals" / "units-abc"
+        assert (out / "skills" / "preserve-units" / "SKILL.md").is_file()
+        payload = json.loads((out / "skills" / "preserve-units" / "evals" / "evals.json").read_text())
+        assert payload["skill_name"] == "preserve-units"
+        assert payload["evals"][0]["prompt"] == "held-out similar complaint"
+        assert "answers miss units" in payload["evals"][0]["expected_output"]
+        config_text = (out / "agent-skills-eval.yaml").read_text()
+        assert "baseline: true" in config_text
+        assert "root: ./skills" in config_text
+        provenance = json.loads((out / "evoskill-provenance.json").read_text())
+        assert provenance["candidate_id"] == "units-abc"
+        assert provenance["replay_episode_ids"] == ["heldout"]
+        assert not (loaded.skills_dir / "preserve-units" / "SKILL.md").exists()
+
+    def test_export_requires_held_out_replay(self, tmp_path):
+        cfg = _project(tmp_path, '\n[continuous]\ntrace_sources = ["jsonl"]\n')
+        trace = self._jsonl(tmp_path, heldout=False)
+        from src.cli.config import load_config
+
+        loaded = load_config(config_path=cfg)
+        CandidateStore(loaded.continuous_candidates_dir).save(self._candidate())
+        result = CliRunner().invoke(
+            skill_eval_cmd,
+            ["--config", str(cfg), "--jsonl", str(trace), "--source", "jsonl", "units-abc"],
+        )
+
+        assert result.exit_code == 1
+        assert "no held-out replay tasks" in result.output
+        out = loaded.project_root / ".evoskill" / "continuous" / "external-evals" / "units-abc"
+        assert not out.exists()
+
+    def test_missing_candidate(self, tmp_path):
+        cfg = _project(tmp_path)
+        result = CliRunner().invoke(skill_eval_cmd, ["--config", str(cfg), "nope"])
+        assert result.exit_code == 1
+        assert "no candidate" in result.output
 
 
 class TestLibraryCli:
