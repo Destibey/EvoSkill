@@ -199,6 +199,10 @@ async def run_tick(
         report.stopped_reason = "no verifier for auto mode"
         report.cost_usd = meter.spent
         return report
+    if candidates and manager is None:
+        report.stopped_reason = "no program manager for auto graduation"
+        report.cost_usd = meter.spent
+        return report
 
     existing_texts = [s.text for s in lib.list()] if lib is not None else []
     evaluator = SurrogateEvaluator(MeteredAgent(verifier, meter), max_tasks=cfg.shadow_eval_size)

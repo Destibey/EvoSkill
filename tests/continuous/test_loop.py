@@ -63,6 +63,19 @@ class _FakeVerifier:
         )
 
 
+class _FakeManager:
+    def __init__(self):
+        self.created = []
+
+    def get_current(self):
+        from src.registry.models import ProgramConfig
+        return ProgramConfig(name="base", system_prompt={"type": "preset", "preset": "claude_code"})
+
+    def create_program(self, name, config, parent=None):
+        self.created.append((name, parent, config.metadata))
+        return f"program/{name}"
+
+
 def _tick(tmp_path, **kw):
     """Helper: run a tick with sensible temp stores."""
     store = CandidateStore(tmp_path / "cands")
@@ -133,7 +146,7 @@ class TestAutoMode:
         report, store, _ = _tick(
             tmp_path, readers=[_StaticReader(_similar_failures(5))], distiller=_FakeDistiller(),
             verifier=_FakeVerifier(passing=True), skills_dir=tmp_path / "skills",
-            manager=None, config=cfg,
+            manager=_FakeManager(), config=cfg,
         )
         assert report.num_candidates == 1
         assert report.num_graduated == 1
@@ -146,7 +159,8 @@ class TestAutoMode:
         cfg = TickConfig(mode="auto", min_cluster_size=3)
         report, store, _ = _tick(
             tmp_path, readers=[_StaticReader(_similar_failures(5))], distiller=_FakeDistiller(),
-            verifier=_FakeVerifier(passing=False), skills_dir=tmp_path / "skills", config=cfg,
+            verifier=_FakeVerifier(passing=False), skills_dir=tmp_path / "skills",
+            manager=_FakeManager(), config=cfg,
         )
         assert report.num_graduated == 0
         cand_id = report.candidates[0].candidate_id
@@ -161,7 +175,8 @@ class TestAutoMode:
         cfg = TickConfig(mode="auto", min_cluster_size=3, max_graduations=2)
         report, _, _ = _tick(
             tmp_path, readers=[_StaticReader(eps)], distiller=_FakeDistiller(),
-            verifier=_FakeVerifier(passing=True), skills_dir=tmp_path / "skills", config=cfg,
+            verifier=_FakeVerifier(passing=True), skills_dir=tmp_path / "skills",
+            manager=_FakeManager(), config=cfg,
         )
         assert report.num_graduated == 2
         assert report.stopped_reason == "max_graduations"
@@ -173,7 +188,8 @@ class TestAutoMode:
         cfg = TickConfig(mode="auto", min_cluster_size=3, max_graduations=99, cost_ceiling=0.05)
         report, _, _ = _tick(
             tmp_path, readers=[_StaticReader(eps)], distiller=_FakeDistiller(cost=0.01),
-            verifier=_FakeVerifier(passing=True, cost=0.10), skills_dir=tmp_path / "skills", config=cfg,
+            verifier=_FakeVerifier(passing=True, cost=0.10), skills_dir=tmp_path / "skills",
+            manager=_FakeManager(), config=cfg,
         )
         assert report.stopped_reason == "cost_ceiling"
         assert report.num_graduated < 2
@@ -186,6 +202,21 @@ class TestAutoMode:
         )
         assert report.stopped_reason == "no verifier for auto mode"
         assert report.num_graduated == 0
+
+    def test_no_manager_stops_before_gate_and_graduation(self, tmp_path):
+        cfg = TickConfig(mode="auto", min_cluster_size=3)
+        verifier = _FakeVerifier(passing=True)
+        report, store, _ = _tick(
+            tmp_path, readers=[_StaticReader(_similar_failures(4))], distiller=_FakeDistiller(),
+            verifier=verifier, skills_dir=tmp_path / "skills", manager=None, config=cfg,
+        )
+        assert report.stopped_reason == "no program manager for auto graduation"
+        assert report.gated == {}
+        assert report.num_graduated == 0
+        saved = store.list()
+        assert len(saved) == 1
+        assert saved[0].status == "pending"
+        assert not (tmp_path / "skills" / "skill-1" / "SKILL.md").exists()
 
     def test_dedup_guard_skips_existing(self, tmp_path):
         # An existing live skill the candidate duplicates.
@@ -204,7 +235,7 @@ class TestAutoMode:
         report, _, _ = _tick(
             tmp_path, readers=[_StaticReader(_similar_failures(4))], distiller=_FakeDistiller(),
             verifier=_FakeVerifier(passing=True), skills_dir=sd,
-            similarity_backend=DupBackend(), config=cfg,
+            similarity_backend=DupBackend(), manager=_FakeManager(), config=cfg,
         )
         assert len(report.skipped_duplicates) == 1
         assert report.num_graduated == 0

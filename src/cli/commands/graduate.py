@@ -2,8 +2,8 @@
 
 `evoskill graduate <id>` runs the quality gate (surrogate verifier on a held-out
 replay buffer) and, on pass, installs the skill into the live library and
-snapshots a `program/*` branch. `--force` skips the gate; `--no-branch` installs
-without creating a git branch.
+snapshots a `program/*` branch. `--force` skips the gate. `--no-branch` is
+refused for live graduation because it would leave no rollback snapshot.
 
 `evoskill reject <id>` marks a candidate rejected without touching the library.
 """
@@ -23,7 +23,7 @@ console = Console()
 @click.argument("candidate_id")
 @click.option("--force", is_flag=True, default=False, help="Skip the gate and graduate anyway.")
 @click.option("--no-branch", is_flag=True, default=False,
-              help="Install the skill without creating a program/* branch.")
+              help="Deprecated unsafe mode; live graduation now requires a program/* branch.")
 @click.option("--config", "config_path", type=click.Path(dir_okay=False, path_type=Path),
               default=None, help="Load a specific config TOML file.")
 def graduate_cmd(candidate_id, force, no_branch, config_path):
@@ -44,6 +44,13 @@ def graduate_cmd(candidate_id, force, no_branch, config_path):
     candidate = store.get(candidate_id)
     if candidate is None:
         console.print(f"[red]Error:[/red] no candidate '{candidate_id}'.")
+        raise SystemExit(1)
+
+    if no_branch:
+        console.print(
+            "[red]Error:[/red] refusing to graduate without a program/* snapshot.\n"
+            "  Continuous graduation writes live skills, so rollback evidence is required."
+        )
         raise SystemExit(1)
 
     gate_score = None
@@ -85,10 +92,8 @@ def graduate_cmd(candidate_id, force, no_branch, config_path):
             console.print("\n  Not graduated. Re-run with --force to override.\n")
             raise SystemExit(1)
 
-    manager = None
-    if not no_branch:
-        from src.registry import ProgramManager
-        manager = ProgramManager(cwd=cfg.project_root)
+    from src.registry import ProgramManager
+    manager = ProgramManager(cwd=cfg.project_root)
 
     result = graduate(
         candidate,

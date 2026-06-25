@@ -5,11 +5,11 @@ and auditable:
 
 1. Install the candidate's `SKILL.md` into `.claude/skills/<name>/`.
 2. For a *merge* candidate, archive the originals it replaces (reversibly).
-3. If a `ProgramManager` is supplied, snapshot the change as a `program/*` git
-   branch — so every graduation is versioned and revertible, exactly like the
-   batch loop's programs. (Branched from the current HEAD; it does NOT join the
-   accuracy-based frontier, so continuous graduations never pollute the main
-   loop's score ranking.)
+3. Require a `ProgramManager` by default and snapshot the change as a
+   `program/*` git branch — so every graduation is versioned and revertible,
+   exactly like the batch loop's programs. (Branched from the current HEAD; it
+   does NOT join the accuracy-based frontier, so continuous graduations never
+   pollute the main loop's score ranking.)
 4. Mark the candidate `graduated` in the buffer.
 
 The `ProgramManager` is injected so the filesystem behaviour is unit-testable
@@ -24,6 +24,10 @@ from typing import Any
 
 from .candidates import Candidate, CandidateStore
 from .lifecycle import archive_skill
+
+
+class GraduationSafetyError(RuntimeError):
+    """Raised when graduation would write a live skill without rollback evidence."""
 
 
 def install_skill(skills_dir: str | Path, skill_name: str, skill_markdown: str) -> Path:
@@ -70,6 +74,7 @@ def graduate(
     archive_dir: str | Path | None = None,
     branch_prefix: str = "iter-skill",
     gate_score: float | None = None,
+    require_snapshot: bool = True,
 ) -> GraduationResult:
     """Install a candidate skill and (optionally) version it as a `program/*` branch.
 
@@ -81,11 +86,18 @@ def graduate(
             to a new `program/*` branch (branched from current HEAD).
         archive_dir: where merge-superseded skills are archived (reversible).
         gate_score: the gate score, recorded in branch metadata for audit.
+        require_snapshot: when True, require a ProgramManager-backed program
+            branch before touching the live skill library.
 
     Returns:
         GraduationResult describing what was installed/archived/branched.
     """
     skills_dir = Path(skills_dir)
+    if require_snapshot and manager is None:
+        raise GraduationSafetyError(
+            "graduation requires a program/* snapshot before live skill writeback"
+        )
+
     installed = install_skill(skills_dir, candidate.skill_name, candidate.skill_markdown)
     archived = _archive_merge_originals(candidate, skills_dir, archive_dir)
 

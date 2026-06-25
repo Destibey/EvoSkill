@@ -162,18 +162,18 @@ class TestGraduateCli:
             episode_ids=["e1"], cluster_size=1,
         )
 
-    def test_force_no_branch_installs(self, tmp_path):
+    def test_force_no_branch_refuses_without_snapshot(self, tmp_path):
         cfg = _project(tmp_path)
         from src.cli.config import load_config
         loaded = load_config(config_path=cfg)
         CandidateStore(loaded.continuous_candidates_dir).save(self._candidate())
-        # --force skips the gate (no LLM); --no-branch skips git
+        # --force skips the gate, but live writeback still requires a program/* snapshot.
         result = CliRunner().invoke(
             graduate_cmd, ["--config", str(cfg), "--force", "--no-branch", "units-abc"])
-        assert result.exit_code == 0, result.output
-        assert "Graduated" in result.output
-        assert (loaded.skills_dir / "preserve-units" / "SKILL.md").is_file()
-        assert CandidateStore(loaded.continuous_candidates_dir).get("units-abc").status == "graduated"
+        assert result.exit_code == 1
+        assert "refusing to graduate without a program/* snapshot" in result.output
+        assert not (loaded.skills_dir / "preserve-units" / "SKILL.md").exists()
+        assert CandidateStore(loaded.continuous_candidates_dir).get("units-abc").status == "pending"
 
     def test_graduate_missing_candidate(self, tmp_path):
         cfg = _project(tmp_path)

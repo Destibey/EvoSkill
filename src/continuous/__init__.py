@@ -78,7 +78,7 @@ from .gate import (
     build_surrogate_query,
     run_gate,
 )
-from .graduation import GraduationResult, graduate, install_skill
+from .graduation import GraduationResult, GraduationSafetyError, graduate, install_skill
 from .loop import (
     CostMeter,
     MeteredAgent,
@@ -162,6 +162,7 @@ __all__ = [
     "run_gate",
     # graduation
     "GraduationResult",
+    "GraduationSafetyError",
     "graduate",
     "install_skill",
     # loop / watch tick

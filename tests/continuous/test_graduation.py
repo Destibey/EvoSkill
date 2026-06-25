@@ -7,7 +7,7 @@ import subprocess
 import pytest
 
 from src.continuous.candidates import Candidate, CandidateStore
-from src.continuous.graduation import graduate, install_skill
+from src.continuous.graduation import GraduationSafetyError, graduate, install_skill
 
 
 def _candidate(**kw) -> Candidate:
@@ -44,11 +44,28 @@ class TestInstallSkill:
 
 
 class TestGraduateNoManager:
+    def test_default_requires_snapshot_before_writing(self, tmp_path):
+        skills = tmp_path / ".claude" / "skills"
+        store = CandidateStore(tmp_path / "cands")
+        store.save(_candidate())
+        with pytest.raises(GraduationSafetyError):
+            graduate(_candidate(), skills_dir=skills, store=store, manager=None, gate_score=0.9)
+
+        assert not (skills / "preserve-units" / "SKILL.md").exists()
+        assert store.get("units-abc").status == "pending"
+
     def test_installs_and_marks(self, tmp_path):
         skills = tmp_path / ".claude" / "skills"
         store = CandidateStore(tmp_path / "cands")
         store.save(_candidate())
-        result = graduate(_candidate(), skills_dir=skills, store=store, manager=None, gate_score=0.9)
+        result = graduate(
+            _candidate(),
+            skills_dir=skills,
+            store=store,
+            manager=None,
+            gate_score=0.9,
+            require_snapshot=False,
+        )
         assert (skills / "preserve-units" / "SKILL.md").is_file()
         assert result.branch is None
         assert store.get("units-abc").status == "graduated"
@@ -84,7 +101,14 @@ class TestMergeArchival:
             source="merge", extra={"merged_from": ["preserve-units", "keep-units"]},
         )
         store.save(merged)
-        result = graduate(merged, skills_dir=skills, store=store, manager=None, archive_dir=archive)
+        result = graduate(
+            merged,
+            skills_dir=skills,
+            store=store,
+            manager=None,
+            archive_dir=archive,
+            require_snapshot=False,
+        )
         assert (skills / "units-merged" / "SKILL.md").is_file()       # merged installed
         assert set(result.archived_originals) == {"preserve-units", "keep-units"}
         assert (archive / "preserve-units").is_dir()                  # originals archived
