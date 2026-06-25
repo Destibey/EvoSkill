@@ -7,11 +7,14 @@ no-LLM paths.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from click.testing import CliRunner
 
 from src.cli.commands.candidates import candidates_cmd
+from src.cli.commands.gate import gate_cmd
 from src.cli.commands.graduate import graduate_cmd, reject_cmd
 from src.cli.commands.harvest import harvest_cmd
 from src.cli.commands.library import library_cmd
@@ -105,6 +108,109 @@ class TestCandidatesCli:
         assert "b" in result.output
         # 'a' (pending) should be filtered out of the table rows
         assert "1 candidate(s)" in result.output
+
+    def test_lists_gate_status(self, tmp_path):
+        cfg = _project(tmp_path)
+        from src.cli.config import load_config
+        store = CandidateStore(load_config(config_path=cfg).continuous_candidates_dir)
+        store.save(Candidate(
+            candidate_id="a", skill_name="a", skill_markdown="x", episode_ids=["e"],
+            extra={"gate_passed": False, "gate_score": 0.25, "gate_detail": "not enough replay"},
+        ))
+
+        listing = CliRunner().invoke(candidates_cmd, ["--config", str(cfg)])
+        assert listing.exit_code == 0
+        assert "fail 0.25" in listing.output
+
+        shown = CliRunner().invoke(candidates_cmd, ["--config", str(cfg), "--show", "a"])
+        assert shown.exit_code == 0
+        assert "gate: fail 0.25" in shown.output
+        assert "not enough replay" in shown.output
+
+
+class _FakeGateAgent:
+    def __init__(self, _options, _schema):
+        pass
+
+    async def run(self, query):
+        return SimpleNamespace(
+            output=SimpleNamespace(
+                score=0.84,
+                verdict=True,
+                assertions=["held-out task is covered"],
+                reasoning="candidate generalizes",
+            ),
+            model="fake",
+            total_cost_usd=0.0,
+        )
+
+
+class TestGateCli:
+    def _candidate(self):
+        return Candidate(
+            candidate_id="units-abc", skill_name="preserve-units",
+            skill_markdown="---\nname: preserve-units\ndescription: d\n---\nrule",
+            episode_ids=["source"], cluster_size=1,
+        )
+
+    def _jsonl(self, tmp_path):
+        trace = tmp_path / ".evoskill" / "continuous" / "complaints.jsonl"
+        trace.parent.mkdir(parents=True, exist_ok=True)
+        records = [
+            {"episode_id": "source", "task": "source complaint", "outcome": "failure"},
+            {"episode_id": "heldout", "task": "held-out similar complaint", "outcome": "failure"},
+        ]
+        trace.write_text("\n".join(json.dumps(r) for r in records) + "\n")
+        return trace
+
+    def test_gate_records_verdict_without_graduating(self, tmp_path, monkeypatch):
+        cfg = _project(tmp_path, '\n[continuous]\ntrace_sources = ["jsonl"]\n')
+        trace = self._jsonl(tmp_path)
+        from src.cli.config import load_config
+        import src.harness as harness
+
+        loaded = load_config(config_path=cfg)
+        store = CandidateStore(loaded.continuous_candidates_dir)
+        store.save(self._candidate())
+        monkeypatch.setattr(harness, "set_sdk", lambda _name: None)
+        monkeypatch.setattr(harness, "Agent", _FakeGateAgent)
+
+        result = CliRunner().invoke(
+            gate_cmd, ["--config", str(cfg), "--jsonl", str(trace), "--source", "jsonl", "units-abc"])
+
+        assert result.exit_code == 0, result.output
+        assert "PASS" in result.output
+        assert "Candidate remains buffered" in result.output
+        saved = store.get("units-abc")
+        assert saved.status == "pending"
+        assert saved.extra["gate_passed"] is True
+        assert saved.extra["gate_score"] == 0.84
+        assert saved.extra["gate_n_tasks"] == 1
+        assert not (loaded.skills_dir / "preserve-units" / "SKILL.md").exists()
+
+    def test_gate_fails_closed_without_held_out_replay(self, tmp_path, monkeypatch):
+        cfg = _project(tmp_path, '\n[continuous]\ntrace_sources = ["jsonl"]\n')
+        trace = tmp_path / ".evoskill" / "continuous" / "complaints.jsonl"
+        trace.parent.mkdir(parents=True, exist_ok=True)
+        trace.write_text(json.dumps({"episode_id": "source", "task": "source complaint"}) + "\n")
+        from src.cli.config import load_config
+        import src.harness as harness
+
+        loaded = load_config(config_path=cfg)
+        store = CandidateStore(loaded.continuous_candidates_dir)
+        store.save(self._candidate())
+        monkeypatch.setattr(harness, "set_sdk", lambda _name: None)
+        monkeypatch.setattr(harness, "Agent", _FakeGateAgent)
+
+        result = CliRunner().invoke(
+            gate_cmd, ["--config", str(cfg), "--jsonl", str(trace), "--source", "jsonl", "units-abc"])
+
+        assert result.exit_code == 1
+        assert "FAIL" in result.output
+        saved = store.get("units-abc")
+        assert saved.status == "pending"
+        assert saved.extra["gate_passed"] is False
+        assert saved.extra["gate_n_tasks"] == 0
 
 
 class TestLibraryCli:

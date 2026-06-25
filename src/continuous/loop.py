@@ -32,7 +32,7 @@ from .candidates import Candidate, CandidateStore
 from .cluster import cluster_episodes
 from .collector import TraceCollector, TraceCursor, TraceReader
 from .episode import Outcome
-from .gate import GateVerdict, SurrogateEvaluator, build_replay_buffer, run_gate
+from .gate import GateVerdict, SurrogateEvaluator, build_replay_buffer, record_gate_verdict, run_gate
 from .graduation import graduate
 from .harvest import distill_clusters
 from .library import SkillLibrary
@@ -228,9 +228,7 @@ async def run_tick(
         report.gated[candidate.candidate_id] = verdict
 
         # Record the verdict on the buffered candidate for audit.
-        candidate.extra["gate_score"] = verdict.score
-        candidate.extra["gate_passed"] = verdict.passed
-        store.save(candidate)
+        candidate = record_gate_verdict(store, candidate, verdict)
 
         if verdict.passed:
             graduate(

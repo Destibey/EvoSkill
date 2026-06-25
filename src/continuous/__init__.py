@@ -76,6 +76,7 @@ from .gate import (
     SurrogateEvaluator,
     build_replay_buffer,
     build_surrogate_query,
+    record_gate_verdict,
     run_gate,
 )
 from .graduation import GraduationResult, GraduationSafetyError, graduate, install_skill
@@ -159,6 +160,7 @@ __all__ = [
     "SurrogateEvaluator",
     "build_replay_buffer",
     "build_surrogate_query",
+    "record_gate_verdict",
     "run_gate",
     # graduation
     "GraduationResult",

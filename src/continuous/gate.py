@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from .candidates import Candidate
+from .candidates import Candidate, CandidateStore
 from .episode import TaskEpisode
 from .signals import clamp01
 
@@ -97,7 +97,7 @@ def build_surrogate_query(
     ]
     shown = tasks[:max_tasks]
     if not shown:
-        lines.append("(none available — judge the skill on its own merits)")
+        lines.append("(none available — no independent replay evidence)")
     for i, t in enumerate(shown, start=1):
         text = t.task_text.strip()
         if len(text) > task_chars:
@@ -152,6 +152,15 @@ async def run_gate(
     meets `threshold`. Both conditions guard against weak passes.
     """
     tasks = [GateTask(task_text=e.task_text, task_id=e.task_id) for e in replay_episodes]
+    if not tasks:
+        return GateVerdict(
+            passed=False,
+            method=evaluator.method,
+            score=0.0,
+            threshold=threshold,
+            n_tasks=0,
+            detail="no held-out replay tasks; cannot prove generalization",
+        )
     outcome = await evaluator.evaluate(candidate, tasks)
     passed = bool(outcome.verdict) and outcome.score >= threshold
     return GateVerdict(
@@ -163,3 +172,30 @@ async def run_gate(
         assertions=outcome.assertions,
         detail=outcome.detail,
     )
+
+
+def record_gate_verdict(
+    store: CandidateStore,
+    candidate: Candidate,
+    verdict: GateVerdict,
+    *,
+    evaluated_at: str | None = None,
+) -> Candidate:
+    """Persist a non-live gate verdict on a buffered candidate for audit/review."""
+    extra = dict(candidate.extra)
+    extra.update(
+        {
+            "gate_method": verdict.method,
+            "gate_score": verdict.score,
+            "gate_threshold": verdict.threshold,
+            "gate_passed": verdict.passed,
+            "gate_n_tasks": verdict.n_tasks,
+            "gate_assertions": verdict.assertions,
+            "gate_detail": verdict.detail,
+        }
+    )
+    if evaluated_at is not None:
+        extra["gate_evaluated_at"] = evaluated_at
+    updated = candidate.model_copy(update={"extra": extra})
+    store.save(updated)
+    return updated

@@ -36,6 +36,7 @@ def graduate_cmd(candidate_id, force, no_branch, config_path):
         build_readers,
         build_replay_buffer,
         graduate,
+        record_gate_verdict,
         run_gate,
     )
 
@@ -80,6 +81,7 @@ def graduate_cmd(candidate_id, force, no_branch, config_path):
             candidate, replay, SurrogateEvaluator(verifier),
             threshold=cfg.continuous.graduation_threshold,
         ))
+        candidate = record_gate_verdict(store, candidate, verdict)
         gate_score = verdict.score
         console.print(
             f"\n  Gate ({verdict.method}): score={verdict.score:.2f} "

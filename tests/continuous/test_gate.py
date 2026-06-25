@@ -11,6 +11,7 @@ from src.continuous.gate import (
     SurrogateEvaluator,
     build_replay_buffer,
     build_surrogate_query,
+    record_gate_verdict,
     run_gate,
 )
 
@@ -73,7 +74,7 @@ class TestSurrogateQuery:
 
     def test_no_tasks_handled(self):
         q = build_surrogate_query(_candidate(), [])
-        assert "judge the skill on its own merits" in q
+        assert "no independent replay evidence" in q
 
     def test_caps_and_truncates(self):
         tasks = [GateTask("t" * 1000, str(i)) for i in range(20)]
@@ -115,10 +116,41 @@ class TestRunGate:
 
     def test_low_score_fails(self):
         ev = SurrogateEvaluator(_FakeVerifier(score=0.4, verdict=True))
-        v = asyncio.run(run_gate(_candidate(), [], ev, threshold=0.6))
+        v = asyncio.run(run_gate(_candidate(), [make_episode("e", "t")], ev, threshold=0.6))
         assert v.passed is False
 
     def test_verdict_false_fails_even_high_score(self):
         ev = SurrogateEvaluator(_FakeVerifier(score=0.99, verdict=False))
+        v = asyncio.run(run_gate(_candidate(), [make_episode("e", "t")], ev, threshold=0.6))
+        assert v.passed is False
+
+    def test_no_replay_tasks_fails_closed(self):
+        verifier = _FakeVerifier(score=0.99, verdict=True)
+        ev = SurrogateEvaluator(verifier)
         v = asyncio.run(run_gate(_candidate(), [], ev, threshold=0.6))
         assert v.passed is False
+        assert v.score == 0.0
+        assert v.n_tasks == 0
+        assert "no held-out replay tasks" in v.detail
+        assert verifier.last_query is None
+
+
+class TestRecordGateVerdict:
+    def test_persists_audit_fields_without_status_change(self, tmp_path):
+        from src.continuous.candidates import CandidateStore
+
+        store = CandidateStore(tmp_path / "cands")
+        candidate = _candidate()
+        store.save(candidate)
+        ev = SurrogateEvaluator(_FakeVerifier(score=0.9, verdict=True))
+        verdict = asyncio.run(run_gate(candidate, [make_episode("e3", "t")], ev, threshold=0.6))
+
+        updated = record_gate_verdict(store, candidate, verdict, evaluated_at="2026-06-25T00:00:00Z")
+
+        saved = store.get(candidate.candidate_id)
+        assert updated.status == "pending"
+        assert saved.status == "pending"
+        assert saved.extra["gate_passed"] is True
+        assert saved.extra["gate_score"] == 0.9
+        assert saved.extra["gate_n_tasks"] == 1
+        assert saved.extra["gate_evaluated_at"] == "2026-06-25T00:00:00Z"

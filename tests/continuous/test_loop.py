@@ -143,8 +143,9 @@ class TestReviewMode:
 class TestAutoMode:
     def test_gates_and_graduates(self, tmp_path):
         cfg = TickConfig(mode="auto", min_cluster_size=3, graduation_threshold=0.6, max_graduations=5)
+        eps = _similar_failures(5) + [make_episode("heldout", "similar held-out task", outcome=Outcome.SUCCESS)]
         report, store, _ = _tick(
-            tmp_path, readers=[_StaticReader(_similar_failures(5))], distiller=_FakeDistiller(),
+            tmp_path, readers=[_StaticReader(eps)], distiller=_FakeDistiller(),
             verifier=_FakeVerifier(passing=True), skills_dir=tmp_path / "skills",
             manager=_FakeManager(), config=cfg,
         )
@@ -157,8 +158,9 @@ class TestAutoMode:
 
     def test_gate_failure_blocks_graduation(self, tmp_path):
         cfg = TickConfig(mode="auto", min_cluster_size=3)
+        eps = _similar_failures(5) + [make_episode("heldout", "similar held-out task", outcome=Outcome.SUCCESS)]
         report, store, _ = _tick(
-            tmp_path, readers=[_StaticReader(_similar_failures(5))], distiller=_FakeDistiller(),
+            tmp_path, readers=[_StaticReader(eps)], distiller=_FakeDistiller(),
             verifier=_FakeVerifier(passing=False), skills_dir=tmp_path / "skills",
             manager=_FakeManager(), config=cfg,
         )

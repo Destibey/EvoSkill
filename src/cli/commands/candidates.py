@@ -35,6 +35,12 @@ def candidates_cmd(show_id, status_filter, config_path):
         console.print(f"  pattern: {candidate.target_pattern}")
         console.print(f"  from {candidate.cluster_size} '{candidate.outcome_focus}' episodes  "
                       f"| status: {candidate.status}\n")
+        gate = _gate_label(candidate)
+        if gate != "-":
+            console.print(f"  gate: {gate}")
+            if candidate.extra.get("gate_detail"):
+                console.print(f"  [dim]{str(candidate.extra['gate_detail'])[:300]}[/dim]")
+            console.print()
         console.print(Syntax(candidate.skill_markdown, "markdown", theme="ansi_dark"))
         return
 
@@ -51,12 +57,24 @@ def candidates_cmd(show_id, status_filter, config_path):
     table.add_column("Skill", min_width=20)
     table.add_column("Size", width=5)
     table.add_column("Status", width=10)
+    table.add_column("Gate", width=12)
     table.add_column("Pattern")
     for c in candidates:
         table.add_row(
-            c.candidate_id, c.skill_name, str(c.cluster_size), c.status,
+            c.candidate_id, c.skill_name, str(c.cluster_size), c.status, _gate_label(c),
             (c.target_pattern or "")[:50],
         )
     console.print(table)
     console.print(f"\n  {len(candidates)} candidate(s). "
                   "Inspect one with [bold]evoskill candidates --show <id>[/bold].\n")
+
+
+def _gate_label(candidate) -> str:
+    if "gate_passed" not in candidate.extra:
+        return "-"
+    status = "pass" if candidate.extra.get("gate_passed") else "fail"
+    score = candidate.extra.get("gate_score")
+    try:
+        return f"{status} {float(score):.2f}"
+    except (TypeError, ValueError):
+        return status

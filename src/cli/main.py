@@ -11,6 +11,7 @@ _COMMAND_SPECS = {
     "complaint": ("src.cli.commands.complaint", "complaint_cmd", "Record operator dissatisfaction as a harvestable JSONL failure trace."),
     "harvest": ("src.cli.commands.harvest", "harvest_cmd", "Distill candidate skills from real usage traces."),
     "candidates": ("src.cli.commands.candidates", "candidates_cmd", "List/inspect harvested candidate skills."),
+    "gate": ("src.cli.commands.gate", "gate_cmd", "Evaluate a candidate without live skill writeback."),
     "library": ("src.cli.commands.library", "library_cmd", "Inspect/curate the skill library (stats, duplicates, retrieval)."),
     "graduate": ("src.cli.commands.graduate", "graduate_cmd", "Gate and graduate a candidate skill into the library."),
     "reject": ("src.cli.commands.graduate", "reject_cmd", "Mark a candidate skill rejected."),
